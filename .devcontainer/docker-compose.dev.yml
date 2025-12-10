@@ -1,0 +1,22 @@
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspace:cached
+      - dev-node-modules:/workspace/node_modules
+      - dev-venv:/workspace/backend/.venv
+      - ~/.ssh:/home/vscode/.ssh:ro
+      - ~/.gitconfig:/home/vscode/.gitconfig:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NODE_ENV=development
+    ports:
+      - "3000:3000"
+      - "8000:8000"
+    command: sleep infinity
+
+volumes:
+  dev-node-modules:
+  dev-venv:

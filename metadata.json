@@ -1,0 +1,5 @@
+{
+  "name": "GitSync Pro",
+  "description": "A modern, Docker-ready dashboard for managing one-way Git repository synchronizations with granular control, user management, and credential handling.",
+  "requestFramePermissions": []
+}

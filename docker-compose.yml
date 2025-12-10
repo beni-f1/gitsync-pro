@@ -1,0 +1,58 @@
+services:
+  # Frontend - Nginx serving React app
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_URL=http://localhost:8000/api
+      # Proxy bypass
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - NO_PROXY=*
+      - no_proxy=*
+    restart: unless-stopped
+
+  # Backend - Python FastAPI
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        - HTTP_PROXY=
+        - HTTPS_PROXY=
+        - http_proxy=
+        - https_proxy=
+        - NO_PROXY=*
+        - no_proxy=*
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend-data:/app/data
+      - ~/.ssh:/root/.ssh:ro
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./data/gitsync.db
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - DEMO_MODE=${DEMO_MODE:-false}
+      - CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000"]
+      - GIT_TIMEOUT=300
+      - MAX_RETRIES=3
+      # Proxy bypass
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - NO_PROXY=*
+      - no_proxy=*
+    restart: unless-stopped
+
+volumes:
+  backend-data:

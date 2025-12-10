@@ -1,0 +1,24 @@
+# Backend Dockerfile - Python FastAPI
+# Use Alpine-based image which is smaller and has better package availability
+FROM python:3.12-alpine
+
+# Install git and ssh client
+RUN apk add --no-cache git openssh-client ca-certificates
+
+WORKDIR /app
+
+# Install Python dependencies
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY backend/app ./app
+
+# Create data directory
+RUN mkdir -p /app/data
+
+# Expose port
+EXPOSE 8000
+
+# Run the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
