@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Card, Button, Input, Select, StatusBadge } from '../components/ui';
-import { apiService, mapJobFromApi, mapJobRunFromApi, mapCredentialFromApi } from '../services/api';
-import { SyncJob, Credential, UserRole, User, JobRun, SyncStatus } from '../types';
-import { Plus, Play, MoreHorizontal, Trash2, Edit2, RefreshCw, History, X, GitBranch, Tag, GitCommit, FileText, Clock, ChevronDown, ChevronRight, Power, Terminal } from 'lucide-react';
+import { apiService, mapJobFromApi, mapJobRunFromApi, mapCredentialFromApi, mapCompareResultFromApi } from '../services/api';
+import { SyncJob, Credential, UserRole, User, JobRun, SyncStatus, CompareResult, BranchComparison, TagComparison } from '../types';
+import { Plus, Play, MoreHorizontal, Trash2, Edit2, RefreshCw, History, X, GitBranch, Tag, GitCommit, FileText, Clock, ChevronDown, ChevronRight, Power, Terminal, GitCompare, ArrowRight, CheckCircle2, AlertTriangle, ArrowUpRight, ArrowDownRight, AlertCircle } from 'lucide-react';
 
 export const Jobs = () => {
   const userStr = sessionStorage.getItem('gs_current_user');
@@ -24,6 +24,12 @@ export const Jobs = () => {
   const [liveRun, setLiveRun] = useState<JobRun | null>(null);
   const [liveWs, setLiveWs] = useState<WebSocket | null>(null);
   const liveLogRef = useRef<HTMLDivElement>(null);
+  
+  // Compare modal state
+  const [compareJobId, setCompareJobId] = useState<string | null>(null);
+  const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
   
   // Permissions
   const canEdit = user?.role !== UserRole.VIEWER;
@@ -158,6 +164,28 @@ export const Jobs = () => {
     setLiveLogJobId(null);
     setLiveRun(null);
     fetchData();
+  };
+
+  const handleCompare = async (id: string) => {
+    setCompareJobId(id);
+    setCompareResult(null);
+    setCompareError(null);
+    setCompareLoading(true);
+    
+    try {
+      const result = await apiService.compareJob(id);
+      setCompareResult(mapCompareResultFromApi(result));
+    } catch (err: any) {
+      setCompareError(err.message || 'Failed to compare repositories');
+    } finally {
+      setCompareLoading(false);
+    }
+  };
+
+  const closeCompare = () => {
+    setCompareJobId(null);
+    setCompareResult(null);
+    setCompareError(null);
   };
 
   const openModal = (job?: SyncJob) => {
@@ -298,6 +326,9 @@ export const Jobs = () => {
                  )}
                  <Button variant="secondary" onClick={() => openHistory(job)} title="View history">
                     <History size={16} />
+                 </Button>
+                 <Button variant="secondary" onClick={() => handleCompare(job.id)} disabled={job.lastRunStatus === 'SYNCING'} title="Compare repositories">
+                    <GitCompare size={16} className={job.lastRunStatus === 'SYNCING' ? 'text-slate-500' : 'text-blue-400'} />
                  </Button>
                  <Button variant="secondary" onClick={() => handleTrigger(job.id)} disabled={job.lastRunStatus === 'SYNCING' || !job.enabled} title={!job.enabled ? 'Job disabled' : job.lastRunStatus === 'SYNCING' ? 'Sync in progress' : 'Run sync'}>
                     <Play size={16} className={job.lastRunStatus === 'SYNCING' || !job.enabled ? 'text-slate-500' : 'text-emerald-400'} />
@@ -623,6 +654,238 @@ export const Jobs = () => {
                   <span className="text-sm text-slate-400">
                     Duration: {formatDuration(liveRun.startedAt, liveRun.completedAt)}
                   </span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Compare Modal */}
+      {compareJobId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-slate-800 flex justify-between items-center shrink-0">
+              <div className="flex items-center space-x-3">
+                <GitCompare className="text-blue-400" size={20} />
+                <h3 className="text-lg font-semibold text-white">Repository Comparison</h3>
+                <span className="text-sm text-slate-500">
+                  {jobs.find(j => j.id === compareJobId)?.name}
+                </span>
+              </div>
+              <button onClick={closeCompare} className="text-slate-400 hover:text-white">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4">
+              {compareLoading && (
+                <div className="flex flex-col items-center justify-center py-12 space-y-4">
+                  <RefreshCw className="animate-spin text-blue-400" size={32} />
+                  <p className="text-slate-400">Fetching and comparing repositories...</p>
+                  <p className="text-sm text-slate-500">This may take a moment</p>
+                </div>
+              )}
+              
+              {compareError && (
+                <div className="flex flex-col items-center justify-center py-12 space-y-4">
+                  <AlertCircle className="text-red-400" size={32} />
+                  <p className="text-red-400">{compareError}</p>
+                  <Button variant="secondary" onClick={() => handleCompare(compareJobId)}>
+                    Try Again
+                  </Button>
+                </div>
+              )}
+              
+              {compareResult && !compareLoading && (
+                <div className="space-y-6">
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-slate-800/50 rounded-lg p-4">
+                      <div className="text-2xl font-bold text-white">{compareResult.summary.totalBranches}</div>
+                      <div className="text-sm text-slate-400">Total Branches</div>
+                    </div>
+                    <div className="bg-slate-800/50 rounded-lg p-4">
+                      <div className="text-2xl font-bold text-emerald-400">{compareResult.summary.branchesSynced}</div>
+                      <div className="text-sm text-slate-400">Synced</div>
+                    </div>
+                    <div className="bg-slate-800/50 rounded-lg p-4">
+                      <div className="text-2xl font-bold text-blue-400">
+                        {compareResult.summary.branchesAhead + compareResult.summary.branchesNewInSource}
+                      </div>
+                      <div className="text-sm text-slate-400">Need Sync</div>
+                    </div>
+                    <div className="bg-slate-800/50 rounded-lg p-4">
+                      <div className="text-2xl font-bold text-amber-400">{compareResult.summary.branchesDiverged}</div>
+                      <div className="text-sm text-slate-400">Diverged</div>
+                    </div>
+                  </div>
+                  
+                  {/* Branches Section */}
+                  <div>
+                    <h4 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3 flex items-center space-x-2">
+                      <GitBranch size={14} />
+                      <span>Branches ({compareResult.branches.length})</span>
+                    </h4>
+                    <div className="space-y-2">
+                      {compareResult.branches.map((branch: BranchComparison) => (
+                        <div 
+                          key={branch.name}
+                          className={`flex items-center justify-between p-3 rounded-lg ${
+                            branch.status === 'synced' ? 'bg-slate-800/30' :
+                            branch.status === 'new_in_source' ? 'bg-blue-900/20 border border-blue-800/50' :
+                            branch.status === 'ahead' ? 'bg-blue-900/20 border border-blue-800/50' :
+                            branch.status === 'behind' ? 'bg-amber-900/20 border border-amber-800/50' :
+                            branch.status === 'diverged' ? 'bg-red-900/20 border border-red-800/50' :
+                            'bg-slate-800/30 border border-slate-700/50'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-3">
+                            <GitBranch size={16} className="text-slate-500" />
+                            <span className="font-mono text-sm text-white">{branch.name}</span>
+                          </div>
+                          <div className="flex items-center space-x-4">
+                            {branch.status === 'synced' && (
+                              <span className="flex items-center space-x-1 text-emerald-400 text-sm">
+                                <CheckCircle2 size={14} />
+                                <span>Synced</span>
+                              </span>
+                            )}
+                            {branch.status === 'new_in_source' && (
+                              <span className="flex items-center space-x-1 text-blue-400 text-sm">
+                                <ArrowUpRight size={14} />
+                                <span>New in source</span>
+                              </span>
+                            )}
+                            {branch.status === 'new_in_dest' && (
+                              <span className="flex items-center space-x-1 text-slate-400 text-sm">
+                                <ArrowDownRight size={14} />
+                                <span>Only in destination</span>
+                              </span>
+                            )}
+                            {branch.status === 'ahead' && (
+                              <span className="flex items-center space-x-1 text-blue-400 text-sm">
+                                <ArrowUpRight size={14} />
+                                <span>{branch.ahead} ahead</span>
+                              </span>
+                            )}
+                            {branch.status === 'behind' && (
+                              <span className="flex items-center space-x-1 text-amber-400 text-sm">
+                                <ArrowDownRight size={14} />
+                                <span>{branch.behind} behind</span>
+                              </span>
+                            )}
+                            {branch.status === 'diverged' && (
+                              <span className="flex items-center space-x-1 text-red-400 text-sm">
+                                <AlertTriangle size={14} />
+                                <span>{branch.ahead}↑ {branch.behind}↓ diverged</span>
+                              </span>
+                            )}
+                            <div className="text-xs text-slate-500 font-mono">
+                              {branch.sourceCommit && <span>{branch.sourceCommit}</span>}
+                              {branch.sourceCommit && branch.destCommit && <span className="mx-1">→</span>}
+                              {branch.destCommit && <span>{branch.destCommit}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {compareResult.branches.length === 0 && (
+                        <div className="text-center py-4 text-slate-500">No branches found</div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Tags Section */}
+                  {compareResult.tags.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3 flex items-center space-x-2">
+                        <Tag size={14} />
+                        <span>Tags ({compareResult.tags.length})</span>
+                      </h4>
+                      <div className="space-y-2">
+                        {compareResult.tags.map((tag: TagComparison) => (
+                          <div 
+                            key={tag.name}
+                            className={`flex items-center justify-between p-3 rounded-lg ${
+                              tag.status === 'synced' ? 'bg-slate-800/30' :
+                              tag.status === 'new_in_source' ? 'bg-blue-900/20 border border-blue-800/50' :
+                              tag.status === 'new_in_dest' ? 'bg-slate-800/30 border border-slate-700/50' :
+                              'bg-amber-900/20 border border-amber-800/50'
+                            }`}
+                          >
+                            <div className="flex items-center space-x-3">
+                              <Tag size={16} className="text-slate-500" />
+                              <span className="font-mono text-sm text-white">{tag.name}</span>
+                            </div>
+                            <div className="flex items-center space-x-4">
+                              {tag.status === 'synced' && (
+                                <span className="flex items-center space-x-1 text-emerald-400 text-sm">
+                                  <CheckCircle2 size={14} />
+                                  <span>Synced</span>
+                                </span>
+                              )}
+                              {tag.status === 'new_in_source' && (
+                                <span className="flex items-center space-x-1 text-blue-400 text-sm">
+                                  <ArrowUpRight size={14} />
+                                  <span>New in source</span>
+                                </span>
+                              )}
+                              {tag.status === 'new_in_dest' && (
+                                <span className="flex items-center space-x-1 text-slate-400 text-sm">
+                                  <ArrowDownRight size={14} />
+                                  <span>Only in destination</span>
+                                </span>
+                              )}
+                              {tag.status === 'different' && (
+                                <span className="flex items-center space-x-1 text-amber-400 text-sm">
+                                  <AlertTriangle size={14} />
+                                  <span>Different</span>
+                                </span>
+                              )}
+                              <div className="text-xs text-slate-500 font-mono">
+                                {tag.sourceCommit && <span>{tag.sourceCommit}</span>}
+                                {tag.sourceCommit && tag.destCommit && <span className="mx-1">→</span>}
+                                {tag.destCommit && <span>{tag.destCommit}</span>}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            {/* Footer with actions */}
+            {compareResult && !compareLoading && (
+              <div className="p-4 border-t border-slate-800 flex justify-between items-center shrink-0">
+                <div className="text-sm text-slate-400">
+                  {compareResult.summary.branchesAhead + compareResult.summary.branchesNewInSource > 0 ? (
+                    <span className="text-blue-400">
+                      {compareResult.summary.branchesAhead + compareResult.summary.branchesNewInSource} branches need to be synced
+                    </span>
+                  ) : (
+                    <span className="text-emerald-400">All branches are up to date</span>
+                  )}
+                </div>
+                <div className="flex space-x-3">
+                  <Button variant="secondary" onClick={closeCompare}>
+                    Close
+                  </Button>
+                  {(compareResult.summary.branchesAhead + compareResult.summary.branchesNewInSource + 
+                    compareResult.summary.tagsNewInSource > 0) && (
+                    <Button 
+                      variant="primary" 
+                      onClick={() => {
+                        closeCompare();
+                        handleTrigger(compareJobId);
+                      }}
+                    >
+                      <Play size={16} className="mr-2" />
+                      Sync Now
+                    </Button>
+                  )}
                 </div>
               </div>
             )}

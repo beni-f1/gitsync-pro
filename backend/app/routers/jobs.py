@@ -8,7 +8,7 @@ import json
 
 from app.database import get_db, async_session
 from app.models import SyncJob, JobRun, Credential, User, SyncStatus
-from app.schemas import SyncJobCreate, SyncJobUpdate, SyncJobResponse, JobRunResponse
+from app.schemas import SyncJobCreate, SyncJobUpdate, SyncJobResponse, JobRunResponse, CompareResultSchema
 from app.auth import require_editor, get_current_user
 from app.config import settings
 from app.services.git_sync import GitSyncService
@@ -149,6 +149,70 @@ async def trigger_job(
     asyncio.create_task(_execute_sync(job_id, run.id))
     
     return {"run_id": run.id, "message": "Sync job triggered"}
+
+
+@router.post("/{job_id}/compare", response_model=CompareResultSchema)
+async def compare_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Compare source and destination repositories without syncing"""
+    result = await db.execute(select(SyncJob).where(SyncJob.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Load credentials
+    source_cred = None
+    dest_cred = None
+    
+    if job.source_credential_id:
+        result = await db.execute(select(Credential).where(Credential.id == job.source_credential_id))
+        source_cred = result.scalar_one_or_none()
+    
+    if job.destination_credential_id:
+        result = await db.execute(select(Credential).where(Credential.id == job.destination_credential_id))
+        dest_cred = result.scalar_one_or_none()
+    
+    # Create sync service for comparison
+    sync_service = GitSyncService(
+        source_url=job.source_url,
+        destination_url=job.destination_url,
+        branch_filter=job.branch_filter,
+        tag_filter=job.tag_filter,
+        source_username=source_cred.username if source_cred else None,
+        source_password=decrypt_secret(source_cred.encrypted_password) if source_cred and source_cred.encrypted_password else None,
+        source_ssh_key=decrypt_secret(source_cred.encrypted_ssh_key) if source_cred and source_cred.encrypted_ssh_key else None,
+        source_token=decrypt_secret(source_cred.encrypted_token) if source_cred and source_cred.encrypted_token else None,
+        dest_username=dest_cred.username if dest_cred else None,
+        dest_password=decrypt_secret(dest_cred.encrypted_password) if dest_cred and dest_cred.encrypted_password else None,
+        dest_ssh_key=decrypt_secret(dest_cred.encrypted_ssh_key) if dest_cred and dest_cred.encrypted_ssh_key else None,
+        dest_token=decrypt_secret(dest_cred.encrypted_token) if dest_cred and dest_cred.encrypted_token else None,
+    )
+    
+    compare_result = await sync_service.compare()
+    
+    return CompareResultSchema(
+        success=compare_result.success,
+        message=compare_result.message,
+        branches=[{
+            "name": b.name,
+            "source_commit": b.source_commit,
+            "dest_commit": b.dest_commit,
+            "ahead": b.ahead,
+            "behind": b.behind,
+            "status": b.status
+        } for b in compare_result.branches],
+        tags=[{
+            "name": t.name,
+            "source_commit": t.source_commit,
+            "dest_commit": t.dest_commit,
+            "status": t.status
+        } for t in compare_result.tags],
+        summary=compare_result.summary,
+        logs=[{"timestamp": l["timestamp"], "level": l["level"], "message": l["message"]} for l in compare_result.logs]
+    )
 
 
 @router.get("/{job_id}/runs", response_model=List[JobRunResponse])

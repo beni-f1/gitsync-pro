@@ -172,6 +172,10 @@ class ApiService {
     return this.request<{ run_id: string }>(`/jobs/${id}/trigger`, { method: 'POST' });
   }
 
+  async compareJob(id: string) {
+    return this.request<any>(`/jobs/${id}/compare`, { method: 'POST' });
+  }
+
   async getJobRuns(jobId: string) {
     return this.request<any[]>(`/jobs/${jobId}/runs`);
   }
@@ -288,5 +292,42 @@ export function mapSettingsFromApi(settings: any): any {
     maxRetries: settings.max_retries,
     logRetentionDays: settings.log_retention_days,
     demoMode: settings.demo_mode,
+  };
+}
+
+// Helper to map backend compare result to frontend format
+export function mapCompareResultFromApi(result: any): any {
+  return {
+    success: result.success,
+    message: result.message,
+    branches: result.branches.map((b: any) => ({
+      name: b.name,
+      sourceCommit: b.source_commit,
+      destCommit: b.dest_commit,
+      ahead: b.ahead,
+      behind: b.behind,
+      status: b.status,
+    })),
+    tags: result.tags.map((t: any) => ({
+      name: t.name,
+      sourceCommit: t.source_commit,
+      destCommit: t.dest_commit,
+      status: t.status,
+    })),
+    summary: {
+      totalBranches: result.summary.total_branches,
+      branchesSynced: result.summary.branches_synced,
+      branchesAhead: result.summary.branches_ahead,
+      branchesBehind: result.summary.branches_behind,
+      branchesDiverged: result.summary.branches_diverged,
+      branchesNewInSource: result.summary.branches_new_in_source,
+      branchesNewInDest: result.summary.branches_new_in_dest,
+      totalTags: result.summary.total_tags,
+      tagsSynced: result.summary.tags_synced,
+      tagsNewInSource: result.summary.tags_new_in_source,
+      tagsNewInDest: result.summary.tags_new_in_dest,
+      tagsDifferent: result.summary.tags_different,
+    },
+    logs: result.logs || [],
   };
 }

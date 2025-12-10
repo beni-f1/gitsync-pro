@@ -158,3 +158,44 @@ class AppSettingsSchema(BaseModel):
     max_retries: int = 3
     log_retention_days: int = 14
     demo_mode: bool = False
+
+
+# Compare Schemas
+class BranchComparisonSchema(BaseModel):
+    name: str
+    source_commit: Optional[str] = None
+    dest_commit: Optional[str] = None
+    ahead: int = 0
+    behind: int = 0
+    status: str = "synced"  # synced, ahead, behind, diverged, new_in_source, new_in_dest
+
+
+class TagComparisonSchema(BaseModel):
+    name: str
+    source_commit: Optional[str] = None
+    dest_commit: Optional[str] = None
+    status: str = "synced"  # synced, new_in_source, new_in_dest, different
+
+
+class CompareSummarySchema(BaseModel):
+    total_branches: int = 0
+    branches_synced: int = 0
+    branches_ahead: int = 0
+    branches_behind: int = 0
+    branches_diverged: int = 0
+    branches_new_in_source: int = 0
+    branches_new_in_dest: int = 0
+    total_tags: int = 0
+    tags_synced: int = 0
+    tags_new_in_source: int = 0
+    tags_new_in_dest: int = 0
+    tags_different: int = 0
+
+
+class CompareResultSchema(BaseModel):
+    success: bool
+    message: str
+    branches: List[BranchComparisonSchema] = []
+    tags: List[TagComparisonSchema] = []
+    summary: CompareSummarySchema = CompareSummarySchema()
+    logs: List[JobRunLogEntry] = []

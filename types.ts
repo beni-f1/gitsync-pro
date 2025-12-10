@@ -88,3 +88,44 @@ export interface AppSettings {
   logRetentionDays: number;
   demoMode?: boolean;
 }
+
+// Compare types
+export interface BranchComparison {
+  name: string;
+  sourceCommit?: string;
+  destCommit?: string;
+  ahead: number;
+  behind: number;
+  status: 'synced' | 'ahead' | 'behind' | 'diverged' | 'new_in_source' | 'new_in_dest';
+}
+
+export interface TagComparison {
+  name: string;
+  sourceCommit?: string;
+  destCommit?: string;
+  status: 'synced' | 'new_in_source' | 'new_in_dest' | 'different';
+}
+
+export interface CompareSummary {
+  totalBranches: number;
+  branchesSynced: number;
+  branchesAhead: number;
+  branchesBehind: number;
+  branchesDiverged: number;
+  branchesNewInSource: number;
+  branchesNewInDest: number;
+  totalTags: number;
+  tagsSynced: number;
+  tagsNewInSource: number;
+  tagsNewInDest: number;
+  tagsDifferent: number;
+}
+
+export interface CompareResult {
+  success: boolean;
+  message: string;
+  branches: BranchComparison[];
+  tags: TagComparison[];
+  summary: CompareSummary;
+  logs: JobRunLogEntry[];
+}

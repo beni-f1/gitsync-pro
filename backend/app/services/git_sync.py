@@ -26,6 +26,34 @@ class SyncResult:
     logs: List[Dict] = field(default_factory=list)
 
 
+@dataclass
+class BranchComparison:
+    name: str
+    source_commit: Optional[str] = None
+    dest_commit: Optional[str] = None
+    ahead: int = 0  # commits in source not in dest
+    behind: int = 0  # commits in dest not in source
+    status: str = "synced"  # synced, ahead, behind, diverged, new_in_source, new_in_dest
+
+
+@dataclass
+class TagComparison:
+    name: str
+    source_commit: Optional[str] = None
+    dest_commit: Optional[str] = None
+    status: str = "synced"  # synced, new_in_source, new_in_dest, different
+
+
+@dataclass
+class CompareResult:
+    success: bool
+    message: str
+    branches: List[BranchComparison] = field(default_factory=list)
+    tags: List[TagComparison] = field(default_factory=list)
+    summary: Dict = field(default_factory=dict)
+    logs: List[Dict] = field(default_factory=list)
+
+
 class GitSyncService:
     def __init__(
         self,
@@ -270,6 +298,245 @@ class GitSyncService:
                 shutil.rmtree(self.work_dir, ignore_errors=True)
         
         return result
+
+    async def compare(self) -> CompareResult:
+        """Compare source and destination repositories without syncing"""
+        result = CompareResult(success=False, message="")
+        source_ssh_key_path = None
+        dest_ssh_key_path = None
+        
+        try:
+            # Create temporary work directory
+            self.work_dir = tempfile.mkdtemp(prefix="gitsync_compare_")
+            self._log("INFO", "Starting repository comparison...")
+            
+            # Setup SSH keys if needed
+            if self.source_creds.get("ssh_key"):
+                source_ssh_key_path = self._setup_ssh_key(self.source_creds["ssh_key"])
+            if self.dest_creds.get("ssh_key"):
+                dest_ssh_key_path = self._setup_ssh_key(self.dest_creds["ssh_key"])
+            
+            # Build authenticated URLs
+            source_url = self._build_auth_url(self.source_url, self.source_creds)
+            dest_url = self._build_auth_url(self.destination_url, self.dest_creds)
+            
+            # Clone source repository (bare)
+            self._log("INFO", "Fetching source repository...")
+            await asyncio.sleep(0.1)
+            
+            source_dir = os.path.join(self.work_dir, "source")
+            clone_source = self._run_git(
+                ["clone", "--bare", source_url, "source"],
+                cwd=self.work_dir,
+                ssh_key_path=source_ssh_key_path
+            )
+            
+            if clone_source.returncode != 0:
+                error_msg = clone_source.stderr.strip() or "Failed to clone source repository"
+                error_msg = self._sanitize_output(error_msg)
+                self._log("ERROR", error_msg)
+                result.message = error_msg
+                result.logs = self.logs
+                return result
+            
+            # Clone destination repository (bare)
+            self._log("INFO", "Fetching destination repository...")
+            await asyncio.sleep(0.1)
+            
+            dest_dir = os.path.join(self.work_dir, "dest")
+            clone_dest = self._run_git(
+                ["clone", "--bare", dest_url, "dest"],
+                cwd=self.work_dir,
+                ssh_key_path=dest_ssh_key_path
+            )
+            
+            if clone_dest.returncode != 0:
+                error_msg = clone_dest.stderr.strip() or "Failed to clone destination repository"
+                error_msg = self._sanitize_output(error_msg)
+                self._log("ERROR", error_msg)
+                result.message = error_msg
+                result.logs = self.logs
+                return result
+            
+            # Get branches from both repos
+            source_branches = self._get_all_refs(source_dir, "heads")
+            dest_branches = self._get_all_refs(dest_dir, "heads")
+            
+            # Get tags from both repos
+            source_tags = self._get_all_refs(source_dir, "tags")
+            dest_tags = self._get_all_refs(dest_dir, "tags")
+            
+            # Apply filters
+            source_branches_filtered = self._filter_refs(source_branches, self.branch_filter)
+            dest_branches_filtered = self._filter_refs(dest_branches, self.branch_filter)
+            
+            if self.tag_filter:
+                source_tags_filtered = self._filter_refs(source_tags, self.tag_filter)
+                dest_tags_filtered = self._filter_refs(dest_tags, self.tag_filter)
+            else:
+                source_tags_filtered = {}
+                dest_tags_filtered = {}
+            
+            self._log("INFO", "Comparing branches...")
+            
+            # Compare branches
+            all_branch_names = set(source_branches_filtered.keys()) | set(dest_branches_filtered.keys())
+            branch_comparisons = []
+            
+            for branch_name in sorted(all_branch_names):
+                source_commit = source_branches_filtered.get(branch_name)
+                dest_commit = dest_branches_filtered.get(branch_name)
+                
+                comparison = BranchComparison(
+                    name=branch_name,
+                    source_commit=source_commit[:8] if source_commit else None,
+                    dest_commit=dest_commit[:8] if dest_commit else None
+                )
+                
+                if source_commit and not dest_commit:
+                    comparison.status = "new_in_source"
+                    self._log("DEBUG", f"Branch '{branch_name}': new in source")
+                elif dest_commit and not source_commit:
+                    comparison.status = "new_in_dest"
+                    self._log("DEBUG", f"Branch '{branch_name}': only in destination")
+                elif source_commit == dest_commit:
+                    comparison.status = "synced"
+                else:
+                    # Need to count commits ahead/behind
+                    # Add source as remote to dest repo for comparison
+                    self._run_git(["remote", "add", "source", source_dir], cwd=dest_dir)
+                    self._run_git(["fetch", "source"], cwd=dest_dir)
+                    
+                    # Count commits ahead (in source, not in dest)
+                    ahead_result = self._run_git(
+                        ["rev-list", "--count", f"{dest_commit}..source/{branch_name}"],
+                        cwd=dest_dir
+                    )
+                    ahead = int(ahead_result.stdout.strip()) if ahead_result.returncode == 0 else 0
+                    
+                    # Count commits behind (in dest, not in source)
+                    behind_result = self._run_git(
+                        ["rev-list", "--count", f"source/{branch_name}..{dest_commit}"],
+                        cwd=dest_dir
+                    )
+                    behind = int(behind_result.stdout.strip()) if behind_result.returncode == 0 else 0
+                    
+                    comparison.ahead = ahead
+                    comparison.behind = behind
+                    
+                    if ahead > 0 and behind > 0:
+                        comparison.status = "diverged"
+                        self._log("DEBUG", f"Branch '{branch_name}': diverged ({ahead} ahead, {behind} behind)")
+                    elif ahead > 0:
+                        comparison.status = "ahead"
+                        self._log("DEBUG", f"Branch '{branch_name}': {ahead} commits ahead")
+                    elif behind > 0:
+                        comparison.status = "behind"
+                        self._log("DEBUG", f"Branch '{branch_name}': {behind} commits behind")
+                    else:
+                        comparison.status = "synced"
+                
+                branch_comparisons.append(comparison)
+            
+            # Compare tags
+            self._log("INFO", "Comparing tags...")
+            all_tag_names = set(source_tags_filtered.keys()) | set(dest_tags_filtered.keys())
+            tag_comparisons = []
+            
+            for tag_name in sorted(all_tag_names):
+                source_commit = source_tags_filtered.get(tag_name)
+                dest_commit = dest_tags_filtered.get(tag_name)
+                
+                comparison = TagComparison(
+                    name=tag_name,
+                    source_commit=source_commit[:8] if source_commit else None,
+                    dest_commit=dest_commit[:8] if dest_commit else None
+                )
+                
+                if source_commit and not dest_commit:
+                    comparison.status = "new_in_source"
+                elif dest_commit and not source_commit:
+                    comparison.status = "new_in_dest"
+                elif source_commit == dest_commit:
+                    comparison.status = "synced"
+                else:
+                    comparison.status = "different"
+                
+                tag_comparisons.append(comparison)
+            
+            # Build summary
+            summary = {
+                "total_branches": len(branch_comparisons),
+                "branches_synced": len([b for b in branch_comparisons if b.status == "synced"]),
+                "branches_ahead": len([b for b in branch_comparisons if b.status == "ahead"]),
+                "branches_behind": len([b for b in branch_comparisons if b.status == "behind"]),
+                "branches_diverged": len([b for b in branch_comparisons if b.status == "diverged"]),
+                "branches_new_in_source": len([b for b in branch_comparisons if b.status == "new_in_source"]),
+                "branches_new_in_dest": len([b for b in branch_comparisons if b.status == "new_in_dest"]),
+                "total_tags": len(tag_comparisons),
+                "tags_synced": len([t for t in tag_comparisons if t.status == "synced"]),
+                "tags_new_in_source": len([t for t in tag_comparisons if t.status == "new_in_source"]),
+                "tags_new_in_dest": len([t for t in tag_comparisons if t.status == "new_in_dest"]),
+                "tags_different": len([t for t in tag_comparisons if t.status == "different"]),
+            }
+            
+            self._log("INFO", f"Comparison complete: {summary['total_branches']} branches, {summary['total_tags']} tags")
+            
+            result.success = True
+            result.message = "Comparison completed successfully"
+            result.branches = branch_comparisons
+            result.tags = tag_comparisons
+            result.summary = summary
+            result.logs = self.logs
+            
+        except subprocess.TimeoutExpired:
+            self._log("ERROR", "Git operation timed out")
+            result.message = "Git operation timed out"
+            result.logs = self.logs
+            
+        except Exception as e:
+            error_msg = str(e)
+            self._log("ERROR", f"Comparison failed: {error_msg}")
+            result.message = error_msg
+            result.logs = self.logs
+            
+        finally:
+            # Cleanup
+            if source_ssh_key_path and os.path.exists(source_ssh_key_path):
+                os.unlink(source_ssh_key_path)
+            if dest_ssh_key_path and os.path.exists(dest_ssh_key_path):
+                os.unlink(dest_ssh_key_path)
+            if self.work_dir and os.path.exists(self.work_dir):
+                shutil.rmtree(self.work_dir, ignore_errors=True)
+        
+        return result
+    
+    def _get_all_refs(self, repo_dir: str, ref_type: str) -> Dict[str, str]:
+        """Get all refs with their commit hashes"""
+        result = self._run_git(
+            ["for-each-ref", f"refs/{ref_type}", "--format=%(refname:short) %(objectname)"],
+            cwd=repo_dir
+        )
+        if result.returncode != 0:
+            return {}
+        
+        refs = {}
+        for line in result.stdout.strip().split('\n'):
+            if line:
+                parts = line.split()
+                if len(parts) >= 2:
+                    refs[parts[0]] = parts[1]
+        return refs
+    
+    def _filter_refs(self, refs: Dict[str, str], pattern: str) -> Dict[str, str]:
+        """Filter refs by pattern"""
+        if not pattern:
+            return refs
+        try:
+            regex = re.compile(pattern)
+            return {k: v for k, v in refs.items() if regex.match(k)}
+        except re.error:
+            return {k: v for k, v in refs.items() if pattern in k}
     
     def _get_matching_refs(self, repo_dir: str, ref_type: str, pattern: str) -> List[str]:
         """Get refs matching the filter pattern"""
