@@ -62,7 +62,16 @@ export const Dashboard = () => {
     };
   }, []);
 
-  const stats = {
+  // Stats based on recent runs (not just last job status)
+  const runStats = {
+    total: recentRuns.length,
+    success: recentRuns.filter(r => r.status === SyncStatus.SUCCESS).length,
+    failed: recentRuns.filter(r => r.status === SyncStatus.FAILED).length,
+    syncing: recentRuns.filter(r => r.status === SyncStatus.SYNCING).length,
+  };
+
+  // Stats based on jobs (for job count display)
+  const jobStats = {
     total: jobs.length,
     success: jobs.filter(j => j.lastRunStatus === SyncStatus.SUCCESS).length,
     failed: jobs.filter(j => j.lastRunStatus === SyncStatus.FAILED).length,
@@ -70,10 +79,10 @@ export const Dashboard = () => {
   };
 
   const data = [
-    { name: 'Success', value: stats.success, color: '#10b981' },
-    { name: 'Failed', value: stats.failed, color: '#ef4444' },
-    { name: 'Syncing', value: stats.syncing, color: '#3b82f6' },
-    { name: 'Idle', value: stats.total - (stats.success + stats.failed + stats.syncing), color: '#475569' },
+    { name: 'Success', value: runStats.success, color: '#10b981' },
+    { name: 'Failed', value: runStats.failed, color: '#ef4444' },
+    { name: 'Syncing', value: runStats.syncing, color: '#3b82f6' },
+    { name: 'Pending', value: runStats.total - (runStats.success + runStats.failed + runStats.syncing), color: '#475569' },
   ];
 
   const formatDuration = (start: string, end?: string) => {
@@ -116,7 +125,7 @@ export const Dashboard = () => {
           </div>
           <div>
             <p className="text-slate-400 text-sm">Total Sync Jobs</p>
-            <p className="text-2xl font-bold text-white">{stats.total}</p>
+            <p className="text-2xl font-bold text-white">{jobStats.total}</p>
           </div>
         </Card>
         
@@ -126,7 +135,7 @@ export const Dashboard = () => {
           </div>
           <div>
             <p className="text-slate-400 text-sm">Healthy</p>
-            <p className="text-2xl font-bold text-white">{stats.success}</p>
+            <p className="text-2xl font-bold text-white">{jobStats.success}</p>
           </div>
         </Card>
 
@@ -136,7 +145,7 @@ export const Dashboard = () => {
           </div>
           <div>
             <p className="text-slate-400 text-sm">Failing</p>
-            <p className="text-2xl font-bold text-white">{stats.failed}</p>
+            <p className="text-2xl font-bold text-white">{jobStats.failed}</p>
           </div>
         </Card>
 
@@ -146,7 +155,7 @@ export const Dashboard = () => {
           </div>
           <div>
             <p className="text-slate-400 text-sm">Active Syncs</p>
-            <p className="text-2xl font-bold text-white">{stats.syncing}</p>
+            <p className="text-2xl font-bold text-white">{jobStats.syncing}</p>
           </div>
         </Card>
       </div>
@@ -202,7 +211,8 @@ export const Dashboard = () => {
 
         {/* Chart */}
         <Card className="p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Job Status Overview</h2>
+          <h2 className="text-lg font-semibold text-white mb-4">Recent Runs Overview</h2>
+          <p className="text-sm text-slate-500 mb-4">Based on last {recentRuns.length} sync runs</p>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={data}>
